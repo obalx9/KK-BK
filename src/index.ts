@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 const REQUIRED_ENV_VARS = ['DATABASE_URL', 'JWT_SECRET'];
 const OPTIONAL_ENV_VARS = ['S3_ENDPOINT', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET', 'VK_CLIENT_ID', 'VK_CLIENT_SECRET', 'YANDEX_CLIENT_ID', 'YANDEX_CLIENT_SECRET'];
@@ -74,9 +74,23 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
     process.exit(1);
   }
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[INFO] KeyKurs backend listening on port ${PORT}`);
     console.log(`[INFO] Health check: http://localhost:${PORT}/health`);
+    console.log('[INFO] Server ready to accept connections');
+  });
+
+  server.on('error', (err) => {
+    console.error('[ERROR] Server error:', err);
+    process.exit(1);
+  });
+
+  process.on('SIGTERM', () => {
+    console.log('[INFO] SIGTERM received, shutting down gracefully');
+    server.close(() => {
+      console.log('[INFO] Server closed');
+      process.exit(0);
+    });
   });
 })();
 
