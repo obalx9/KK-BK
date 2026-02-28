@@ -1,5 +1,7 @@
 FROM node:20-alpine
 
+RUN apk add --no-cache curl
+
 WORKDIR /app
 
 COPY package*.json ./
@@ -12,7 +14,7 @@ RUN npm prune --omit=dev
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3000/health', {timeout: 3000}, (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"
+HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
+  CMD curl -f http://127.0.0.1:3000/health || exit 1
 
 CMD ["node", "dist/index.js"]
