@@ -174,6 +174,17 @@ CREATE TABLE IF NOT EXISTS telegram_main_bot (
   created_at timestamptz DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS telegram_linked_chats (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  bot_id uuid NOT NULL REFERENCES telegram_bots(id) ON DELETE CASCADE,
+  chat_id bigint NOT NULL,
+  chat_title text NOT NULL,
+  chat_type text NOT NULL,
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(bot_id, chat_id)
+);
+
 CREATE TABLE IF NOT EXISTS telegram_seller_chats (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   seller_bot_id uuid REFERENCES telegram_bots(id) ON DELETE CASCADE,
@@ -355,6 +366,9 @@ CREATE INDEX IF NOT EXISTS idx_course_post_media_post_id ON course_post_media(po
 CREATE INDEX IF NOT EXISTS idx_media_group_buffer_group_id ON telegram_media_group_buffer(media_group_id);
 CREATE INDEX IF NOT EXISTS idx_media_group_buffer_received_at ON telegram_media_group_buffer(received_at);
 CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_user ON telegram_import_sessions(telegram_user_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_bot_id ON telegram_linked_chats(bot_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_course_id ON telegram_linked_chats(course_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_chat_id ON telegram_linked_chats(chat_id);
 CREATE INDEX IF NOT EXISTS idx_media_access_tokens_token ON media_access_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_media_access_tokens_expires ON media_access_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_student_pinned_posts_student ON student_pinned_posts(student_id, course_id);
