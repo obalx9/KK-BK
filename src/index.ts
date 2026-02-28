@@ -2,14 +2,32 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+const REQUIRED_ENV_VARS = ['DATABASE_URL'];
+const OPTIONAL_ENV_VARS = ['S3_ENDPOINT', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET'];
+
+console.log('[INFO] Checking environment variables...');
+const missingRequired = REQUIRED_ENV_VARS.filter(v => !process.env[v]);
+if (missingRequired.length > 0) {
+  console.error(`[ERROR] Missing required environment variables: ${missingRequired.join(', ')}`);
+  process.exit(1);
+}
+
+const missingOptional = OPTIONAL_ENV_VARS.filter(v => !process.env[v]);
+if (missingOptional.length > 0) {
+  console.warn(`[WARN] Missing optional environment variables: ${missingOptional.join(', ')}`);
+  console.warn('[WARN] Some features may not work (S3 media storage)');
+}
+
+console.log('[INFO] Environment variables OK');
+
 import authRouter from './routes/auth';
 import mediaRouter from './routes/media';
 import webhookRouter from './routes/webhook';
 import telegramRouter from './routes/telegram';
 import sellersRouter from './routes/sellers';
-
-const app = express();
-const PORT = process.env.PORT || 3000;
 
 app.use(cors({
   origin: process.env.APP_URL || '*',
