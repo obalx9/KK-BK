@@ -3,6 +3,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
 
@@ -81,4 +82,33 @@ export async function getS3ObjectMeta(key: string): Promise<{ contentLength: num
 export function getPublicUrl(key: string): string {
   const endpoint = (process.env.S3_ENDPOINT || 'https://s3.twcstorage.ru').replace(/\/$/, '');
   return `${endpoint}/${BUCKET}/${key}`;
+}
+
+export async function deleteFromS3(key: string): Promise<void> {
+  const client = getS3Client();
+  await client.send(
+    new DeleteObjectCommand({
+      Bucket: BUCKET,
+      Key: key,
+    })
+  );
+}
+
+export async function getFileFromS3(key: string): Promise<{ data: Buffer; contentType: string }> {
+  const client = getS3Client();
+  const res = await client.send(new GetObjectCommand({ Bucket: BUCKET, Key: key }));
+
+  const stream = res.Body as Readable;
+  const chunks: Buffer[] = [];
+
+  return new Promise((resolve, reject) => {
+    stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.on('error', reject);
+    stream.on('end', () => {
+      resolve({
+        data: Buffer.concat(chunks),
+        contentType: res.ContentType || 'application/octet-stream'
+      });
+    });
+  });
 }

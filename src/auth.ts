@@ -16,6 +16,11 @@ export interface AuthRequest extends Request {
   userRoles?: string[];
 }
 
+export interface OptionalAuthRequest extends Request {
+  userId?: string;
+  userRoles?: string[];
+}
+
 export function signToken(payload: Omit<JwtPayload, 'iat' | 'exp'>): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '30d' });
 }
@@ -75,3 +80,5 @@ export async function getUserRoles(userId: string): Promise<string[]> {
   );
   return rows?.roles || [];
 }
+
+export const authenticateToken = requireAuth;

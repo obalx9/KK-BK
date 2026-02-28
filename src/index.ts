@@ -28,6 +28,9 @@ import mediaRouter from './routes/media';
 import webhookRouter from './routes/webhook';
 import telegramRouter from './routes/telegram';
 import sellersRouter from './routes/sellers';
+import databaseRouter from './routes/database';
+import storageRouter from './routes/storage';
+import rpcRouter from './routes/rpc';
 import pool from './db';
 
 async function checkDatabaseConnection(): Promise<boolean> {
@@ -57,6 +60,9 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/db', databaseRouter);
+app.use('/api/storage', storageRouter);
+app.use('/api/rpc', rpcRouter);
 app.use('/api/media', mediaRouter);
 app.use('/api/telegram', telegramRouter);
 app.use('/api/sellers', sellersRouter);
