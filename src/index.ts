@@ -27,6 +27,7 @@ import authRouter from './routes/auth';
 import mediaRouter from './routes/media';
 import webhookRouter from './routes/webhook';
 import telegramRouter from './routes/telegram';
+import telegramChatSyncRouter from './routes/telegram-chat-sync';
 import sellersRouter from './routes/sellers';
 import databaseRouter from './routes/database';
 import storageRouter from './routes/storage';
@@ -65,6 +66,7 @@ app.use('/api/storage', storageRouter);
 app.use('/api/rpc', rpcRouter);
 app.use('/api/media', mediaRouter);
 app.use('/api/telegram', telegramRouter);
+app.use('/api/telegram-chat-sync', telegramChatSyncRouter);
 app.use('/api/sellers', sellersRouter);
 app.use('/api/webhook', webhookRouter);
 

@@ -5,6 +5,33 @@ import { signToken, requireAuth, AuthRequest, getUserRoles } from '../auth';
 
 const router = Router();
 
+router.get('/telegram-bot-config', async (_req: Request, res: Response) => {
+  try {
+    const mainBot = await queryOne<{ bot_username: string }>(
+      'SELECT bot_username FROM telegram_main_bot WHERE is_active = true LIMIT 1'
+    );
+
+    if (mainBot?.bot_username) {
+      res.json({ bot_username: mainBot.bot_username });
+      return;
+    }
+
+    const fallbackBot = await queryOne<{ bot_username: string }>(
+      'SELECT bot_username FROM telegram_bots LIMIT 1'
+    );
+
+    if (fallbackBot?.bot_username) {
+      res.json({ bot_username: fallbackBot.bot_username });
+      return;
+    }
+
+    res.status(404).json({ error: 'No Telegram bot configured' });
+  } catch (err) {
+    console.error('Error loading bot config:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 function verifyTelegramAuth(data: Record<string, unknown>, botToken: string): boolean {
   const { hash, ...authData } = data;
   if (typeof hash !== 'string') return false;
