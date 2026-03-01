@@ -181,7 +181,7 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 });
 
-router.get('/oauth', async (req: Request, res: Response) => {
+const handleOAuthStart = (req: Request, res: Response) => {
   const provider = req.query.provider as string;
   const appUrl = process.env.APP_URL || 'http://localhost:5173';
   const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
@@ -198,7 +198,10 @@ router.get('/oauth', async (req: Request, res: Response) => {
   }
 
   res.status(400).json({ error: 'Invalid provider' });
-});
+};
+
+router.get('/oauth', handleOAuthStart);
+router.get('/oauth-login', handleOAuthStart);
 
 router.post('/oauth/pkce', async (req: Request, res: Response) => {
   try {
@@ -371,7 +374,36 @@ router.post('/oauth/session', async (req: Request, res: Response) => {
     const roles = await getUserRoles(user.id);
     const token = signToken({ userId: user.id, roles });
 
-    res.json({ token, roles });
+    res.json({ token, user: { id: user.id, user_id: user.user_id || user.id }, roles });
+  } catch (err) {
+    console.error('OAuth session error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Alias for oauth-create-session (frontend compatibility)
+router.post('/oauth-create-session', async (req: Request, res: Response) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) {
+      res.status(400).json({ error: 'user_id is required' });
+      return;
+    }
+
+    const user = await queryOne<{ id: string; user_id: string | null }>(
+      'SELECT id, user_id FROM users WHERE user_id = $1',
+      [user_id]
+    );
+
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const roles = await getUserRoles(user.id);
+    const token = signToken({ userId: user.id, roles });
+
+    res.json({ token, user: { id: user.id, user_id: user.user_id || user.id }, roles });
   } catch (err) {
     console.error('OAuth session error:', err);
     res.status(500).json({ error: 'Internal server error' });
