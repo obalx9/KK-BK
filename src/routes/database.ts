@@ -14,7 +14,7 @@ router.get('/public/:table', async (req: Request, res: Response) => {
   const { table } = req.params;
   const { select = '*', order, limit, offset } = req.query as Record<string, string>;
 
-  const PUBLIC_TABLES = ['featured_courses', 'ad_posts'];
+  const PUBLIC_TABLES = ['featured_courses', 'ad_posts', 'telegram_main_bot', 'telegram_bots'];
 
   if (!PUBLIC_TABLES.includes(table)) {
     return res.status(403).json({ error: 'Access denied' });
