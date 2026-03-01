@@ -162,6 +162,9 @@ CREATE TABLE IF NOT EXISTS telegram_bots (
   channel_id text,
   channel_username text,
   is_active boolean DEFAULT true,
+  webhook_status text DEFAULT 'unregistered',
+  webhook_registered_at timestamptz,
+  webhook_error text,
   last_sync_at timestamptz,
   created_at timestamptz DEFAULT now()
 );
@@ -318,10 +321,15 @@ CREATE TABLE IF NOT EXISTS ad_posts (
 
 CREATE TABLE IF NOT EXISTS featured_courses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL UNIQUE,
-  position integer DEFAULT 0,
+  title text NOT NULL,
+  description text DEFAULT '',
+  category text DEFAULT '',
+  instructor text DEFAULT '',
+  image_url text DEFAULT '',
+  order_index integer DEFAULT 0,
   is_active boolean DEFAULT true,
-  created_at timestamptz DEFAULT now()
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS premium_sellers (
@@ -365,7 +373,14 @@ CREATE INDEX IF NOT EXISTS idx_course_posts_published_at ON course_posts(publish
 CREATE INDEX IF NOT EXISTS idx_course_post_media_post_id ON course_post_media(post_id);
 CREATE INDEX IF NOT EXISTS idx_media_group_buffer_group_id ON telegram_media_group_buffer(media_group_id);
 CREATE INDEX IF NOT EXISTS idx_media_group_buffer_received_at ON telegram_media_group_buffer(received_at);
+CREATE INDEX IF NOT EXISTS idx_telegram_bots_bot_token ON telegram_bots(bot_token);
+CREATE INDEX IF NOT EXISTS idx_telegram_bots_is_active ON telegram_bots(is_active);
+CREATE INDEX IF NOT EXISTS idx_telegram_bots_seller_id ON telegram_bots(seller_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_bots_course_id ON telegram_bots(course_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_main_bot_token ON telegram_main_bot(bot_token);
 CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_user ON telegram_import_sessions(telegram_user_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_user_id ON telegram_import_sessions(telegram_user_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_course_id ON telegram_import_sessions(course_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_bot_id ON telegram_linked_chats(bot_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_course_id ON telegram_linked_chats(course_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_chat_id ON telegram_linked_chats(chat_id);
@@ -373,6 +388,11 @@ CREATE INDEX IF NOT EXISTS idx_media_access_tokens_token ON media_access_tokens(
 CREATE INDEX IF NOT EXISTS idx_media_access_tokens_expires ON media_access_tokens(expires_at);
 CREATE INDEX IF NOT EXISTS idx_student_pinned_posts_student ON student_pinned_posts(student_id, course_id);
 CREATE INDEX IF NOT EXISTS idx_pkce_sessions_state ON pkce_sessions(state);
+CREATE INDEX IF NOT EXISTS idx_featured_courses_active ON featured_courses(is_active);
+CREATE INDEX IF NOT EXISTS idx_featured_courses_order ON featured_courses(order_index);
+CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id_course_id ON course_enrollments(student_id, course_id);
+CREATE INDEX IF NOT EXISTS idx_ad_posts_seller_id ON ad_posts(seller_id);
+CREATE INDEX IF NOT EXISTS idx_ad_posts_is_featured ON ad_posts(is_featured);
 
 -- ============================================================
 -- CLEANUP FUNCTIONS
