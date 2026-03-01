@@ -68,6 +68,13 @@ function parseFilters(query: Record<string, string>): QueryFilter[] {
   return filters;
 }
 
+function convertValue(value: string): unknown {
+  if (value === 'null') return null;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}
+
 function buildWhereClause(filters: QueryFilter[]): { sql: string; params: unknown[] } {
   if (filters.length === 0) {
     return { sql: '', params: [] };
@@ -83,12 +90,12 @@ function buildWhereClause(filters: QueryFilter[]): { sql: string; params: unknow
     switch (operator) {
       case 'eq':
         conditions.push(`${column} = $${paramIndex}`);
-        params.push(value === 'null' ? null : value);
+        params.push(convertValue(value));
         paramIndex++;
         break;
       case 'neq':
         conditions.push(`${column} != $${paramIndex}`);
-        params.push(value === 'null' ? null : value);
+        params.push(convertValue(value));
         paramIndex++;
         break;
       case 'gt':
@@ -126,7 +133,7 @@ function buildWhereClause(filters: QueryFilter[]): { sql: string; params: unknow
           conditions.push(`${column} IS NULL`);
         } else {
           conditions.push(`${column} IS $${paramIndex}`);
-          params.push(value);
+          params.push(convertValue(value));
           paramIndex++;
         }
         break;
