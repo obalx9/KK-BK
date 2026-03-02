@@ -6,6 +6,10 @@ import { logger } from '../utils/logger.js';
 
 const router = express.Router();
 
+function generateState(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 interface VKUserInfo {
   user: {
     user_id: string;
@@ -91,6 +95,72 @@ async function createOrUpdateUser(
 
   return newUser;
 }
+
+// GET /api/oauth/vk - Initiate VK OAuth flow
+router.get('/vk', async (req: Request, res: Response) => {
+  const pool: Pool = req.app.get('db');
+
+  try {
+    const VK_CLIENT_ID = process.env.VK_CLIENT_ID;
+    const BACKEND_URL = process.env.BACKEND_URL || process.env.API_URL || 'http://localhost:3000';
+    const VK_REDIRECT_URI = `${BACKEND_URL}/api/oauth/vk/callback`;
+
+    if (!VK_CLIENT_ID) {
+      return res.status(500).json({ error: 'VK OAuth not configured' });
+    }
+
+    const state = generateState();
+    const codeVerifier = crypto.randomBytes(32).toString('base64url');
+    const codeChallenge = crypto.createHash('sha256')
+      .update(codeVerifier)
+      .digest('base64url');
+
+    await pool.query(
+      `INSERT INTO pkce_sessions (state, code_verifier)
+       VALUES ($1, $2)`,
+      [state, codeVerifier]
+    );
+
+    const authUrl = new URL('https://id.vk.com/authorize');
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('client_id', VK_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', VK_REDIRECT_URI);
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('scope', 'email');
+    authUrl.searchParams.set('code_challenge', codeChallenge);
+    authUrl.searchParams.set('code_challenge_method', 'S256');
+
+    res.redirect(authUrl.toString());
+  } catch (error) {
+    logger.error('VK OAuth initiation error:', error);
+    const APP_URL = process.env.APP_URL || 'http://localhost:5173';
+    res.redirect(`${APP_URL}/login?error=VK OAuth initiation failed`);
+  }
+});
+
+// GET /api/oauth/yandex - Initiate Yandex OAuth flow
+router.get('/yandex', async (req: Request, res: Response) => {
+  try {
+    const YANDEX_CLIENT_ID = process.env.YANDEX_CLIENT_ID;
+    const BACKEND_URL = process.env.BACKEND_URL || process.env.API_URL || 'http://localhost:3000';
+    const YANDEX_REDIRECT_URI = `${BACKEND_URL}/api/oauth/yandex/callback`;
+
+    if (!YANDEX_CLIENT_ID) {
+      return res.status(500).json({ error: 'Yandex OAuth not configured' });
+    }
+
+    const authUrl = new URL('https://oauth.yandex.ru/authorize');
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('client_id', YANDEX_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri', YANDEX_REDIRECT_URI);
+
+    res.redirect(authUrl.toString());
+  } catch (error) {
+    logger.error('Yandex OAuth initiation error:', error);
+    const APP_URL = process.env.APP_URL || 'http://localhost:5173';
+    res.redirect(`${APP_URL}/login?error=Yandex OAuth initiation failed`);
+  }
+});
 
 // POST /api/oauth/pkce-session - Store PKCE session
 router.post('/pkce-session', async (req: Request, res: Response) => {
