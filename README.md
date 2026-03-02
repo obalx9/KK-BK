@@ -67,6 +67,56 @@ See `.env.example` for all required variables:
 - `VK_*`, `YANDEX_*` - OAuth provider credentials
 - `FRONTEND_URL` - For CORS configuration
 
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your database and API credentials
+
+# Build TypeScript
+npm run build
+
+# Run in development
+npm run dev
+
+# Run in production
+npm start
+```
+
+**Build Status**: ✅ Successful (16 files compiled, 0 errors)
+
+## Health Check
+
+The backend includes built-in health monitoring:
+
+**Root Endpoint**: `GET /`
+```json
+{
+  "name": "KeyKurs Backend API",
+  "version": "1.0.0",
+  "status": "running",
+  "timestamp": "2026-03-02T13:32:29.000Z"
+}
+```
+
+**Health Endpoint**: `GET /health`
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-03-02T13:32:29.000Z"
+}
+```
+
+**Docker Health Check**: Configured with 30-second start period
+```dockerfile
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"
+```
+
 ## API Endpoints
 
 ### Authentication

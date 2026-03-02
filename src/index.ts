@@ -28,6 +28,15 @@ app.use((req, res, next) => {
   next();
 });
 
+app.get('/', (req, res) => {
+  res.json({
+    name: 'KeyKurs Backend API',
+    version: '1.0.0',
+    status: 'running',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
