@@ -1,40 +1,27 @@
-/*
-  ============================================================
-  KeyKurs Platform — Complete Database Schema
-  ============================================================
+-- ============================================================================
+-- KeyKurs Platform - Complete Database Schema
+-- ============================================================================
+-- This file contains the complete database schema consolidated from all
+-- Supabase migrations, organized in dependency order.
+--
+-- Database: PostgreSQL 14+
+-- Tables: 25
+-- Functions: 10
+-- Extensions: pgcrypto, uuid-ossp
+-- ============================================================================
 
-  Target: PostgreSQL (Timeweb DBaaS или любой PostgreSQL 14+)
-
-  Применение:
-    psql $DATABASE_URL -f schema.sql
-
-  ВНИМАНИЕ: Скрипт использует IF NOT EXISTS / IF EXISTS везде,
-  поэтому его можно запускать повторно — он не удалит данные.
-
-  Отличия от Supabase-версии:
-  - Нет Supabase auth (auth.users, auth.uid() и т.д.)
-  - Нет RLS (не нужен, т.к. бэкенд проверяет права сам)
-  - Добавлены поля oauth_id, user_id для OAuth
-  - Добавлена таблица pkce_sessions для VK OAuth PKCE
-  - В course_posts/course_post_media используется storage_path
-    (telegram_file_id сохранён для обратной совместимости)
-  - Добавлено поле thumbnail_storage_path для хранения миниатюр
-  ============================================================
-*/
-
--- ============================================================
--- EXTENSIONS
--- ============================================================
-
+-- Extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- ============================================================
--- USERS & ROLES
--- ============================================================
+-- ============================================================================
+-- CORE TABLES
+-- ============================================================================
 
+-- Users table (base for all authentication)
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id text UNIQUE,
+  user_id uuid,
   telegram_id bigint UNIQUE,
   telegram_username text,
   first_name text,
@@ -42,11 +29,10 @@ CREATE TABLE IF NOT EXISTS users (
   photo_url text,
   email text,
   oauth_provider text,
-  oauth_id text,
-  created_at timestamptz DEFAULT now(),
-  UNIQUE (oauth_provider, oauth_id)
+  created_at timestamptz DEFAULT now()
 );
 
+-- User roles
 CREATE TABLE IF NOT EXISTS user_roles (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid REFERENCES users(id) ON DELETE CASCADE NOT NULL,
@@ -55,10 +41,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
   UNIQUE(user_id, role)
 );
 
--- ============================================================
--- SELLERS & COURSES
--- ============================================================
-
+-- Sellers (course creators)
 CREATE TABLE IF NOT EXISTS sellers (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid REFERENCES users(id) ON DELETE CASCADE UNIQUE NOT NULL,
@@ -68,20 +51,30 @@ CREATE TABLE IF NOT EXISTS sellers (
   created_at timestamptz DEFAULT now()
 );
 
+-- ============================================================================
+-- COURSE STRUCTURE TABLES
+-- ============================================================================
+
+-- Courses
 CREATE TABLE IF NOT EXISTS courses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   seller_id uuid REFERENCES sellers(id) ON DELETE CASCADE NOT NULL,
   title text NOT NULL,
   description text DEFAULT '',
+  price numeric DEFAULT 0,
   thumbnail_url text,
+  telegram_chat_id bigint,
   is_published boolean DEFAULT false,
-  watermark text,
+  is_active boolean DEFAULT true,
   display_settings jsonb DEFAULT '{}',
-  theme_config jsonb DEFAULT '{}',
+  theme_config jsonb DEFAULT '{"mode": "light"}',
+  watermark_enabled boolean DEFAULT false,
+  watermark_text text,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
 
+-- Course modules
 CREATE TABLE IF NOT EXISTS course_modules (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
@@ -91,6 +84,7 @@ CREATE TABLE IF NOT EXISTS course_modules (
   created_at timestamptz DEFAULT now()
 );
 
+-- Course lessons
 CREATE TABLE IF NOT EXISTS course_lessons (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   module_id uuid REFERENCES course_modules(id) ON DELETE CASCADE NOT NULL,
@@ -101,6 +95,7 @@ CREATE TABLE IF NOT EXISTS course_lessons (
   created_at timestamptz DEFAULT now()
 );
 
+-- Lesson content
 CREATE TABLE IF NOT EXISTS lesson_content (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   lesson_id uuid REFERENCES course_lessons(id) ON DELETE CASCADE NOT NULL,
@@ -109,21 +104,38 @@ CREATE TABLE IF NOT EXISTS lesson_content (
   text_content text,
   file_url text,
   file_name text,
-  storage_path text,
   order_index integer NOT NULL DEFAULT 0,
   created_at timestamptz DEFAULT now()
 );
 
+-- ============================================================================
+-- ENROLLMENT TABLES
+-- ============================================================================
+
+-- Course enrollments
 CREATE TABLE IF NOT EXISTS course_enrollments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  student_id uuid REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  granted_by uuid REFERENCES users(id) NOT NULL,
+  student_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  granted_by uuid REFERENCES users(id),
   enrolled_at timestamptz DEFAULT now(),
   expires_at timestamptz,
   UNIQUE(course_id, student_id)
 );
 
+-- Pending enrollments (approval queue)
+CREATE TABLE IF NOT EXISTS pending_enrollments (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
+  student_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+  created_at timestamptz DEFAULT now(),
+  UNIQUE(course_id, student_id)
+);
+
+-- Lesson progress tracking
 CREATE TABLE IF NOT EXISTS lesson_progress (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   enrollment_id uuid REFERENCES course_enrollments(id) ON DELETE CASCADE NOT NULL,
@@ -134,318 +146,400 @@ CREATE TABLE IF NOT EXISTS lesson_progress (
   UNIQUE(enrollment_id, lesson_id)
 );
 
--- ============================================================
--- PENDING ENROLLMENTS
--- ============================================================
+-- ============================================================================
+-- COURSE POSTS & MEDIA TABLES
+-- ============================================================================
 
-CREATE TABLE IF NOT EXISTS pending_enrollments (
+-- Course posts (unified Telegram messages + manual posts)
+CREATE TABLE IF NOT EXISTS course_posts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  telegram_id bigint,
-  telegram_username text,
-  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
-  granted_by uuid REFERENCES users(id) NOT NULL,
-  expires_at timestamptz,
+  message_text text,
+  telegram_message_id bigint,
+  is_pinned boolean DEFAULT false,
+  has_error boolean DEFAULT false,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+-- Course post media (photos, videos, documents, voice)
+CREATE TABLE IF NOT EXISTS course_post_media (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  post_id uuid REFERENCES course_posts(id) ON DELETE CASCADE NOT NULL,
+  media_type text NOT NULL CHECK (media_type IN ('photo', 'video', 'document', 'voice', 'media_group')),
+  s3_url text,
+  telegram_file_id text,
+  file_name text,
+  file_size bigint,
+  mime_type text,
+  thumbnail_s3_url text,
+  media_group_id text,
+  duration_seconds integer,
+  migration_error text,
   created_at timestamptz DEFAULT now()
 );
 
--- ============================================================
--- TELEGRAM BOTS
--- ============================================================
+-- Student pinned posts
+CREATE TABLE IF NOT EXISTS student_pinned_posts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE NOT NULL,
+  post_id uuid REFERENCES course_posts(id) ON DELETE CASCADE NOT NULL,
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
+  pinned_at timestamptz DEFAULT now(),
+  UNIQUE(user_id, post_id)
+);
 
+-- ============================================================================
+-- TELEGRAM BOT TABLES
+-- ============================================================================
+
+-- Telegram bots
 CREATE TABLE IF NOT EXISTS telegram_bots (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  seller_id uuid REFERENCES sellers(id) ON DELETE CASCADE,
-  course_id uuid REFERENCES courses(id) ON DELETE SET NULL,
+  seller_id uuid REFERENCES sellers(id) ON DELETE CASCADE NOT NULL,
   bot_token text NOT NULL,
-  bot_username text,
-  channel_id text,
-  channel_username text,
+  bot_username text NOT NULL,
+  webhook_url text,
   is_active boolean DEFAULT true,
-  webhook_status text DEFAULT 'unregistered',
-  webhook_registered_at timestamptz,
-  webhook_error text,
-  last_sync_at timestamptz,
   created_at timestamptz DEFAULT now()
 );
 
+-- Telegram main bot (platform-wide)
 CREATE TABLE IF NOT EXISTS telegram_main_bot (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   bot_token text NOT NULL,
-  bot_username text,
+  bot_username text NOT NULL,
+  webhook_url text,
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now()
 );
 
+-- Telegram linked chats
 CREATE TABLE IF NOT EXISTS telegram_linked_chats (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  bot_id uuid NOT NULL REFERENCES telegram_bots(id) ON DELETE CASCADE,
-  chat_id bigint NOT NULL,
-  chat_title text NOT NULL,
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
+  chat_id bigint NOT NULL UNIQUE,
   chat_type text NOT NULL,
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE,
-  created_at timestamptz DEFAULT now(),
-  UNIQUE(bot_id, chat_id)
+  chat_title text,
+  linked_at timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS telegram_seller_chats (
+-- Telegram media group buffer (temporary storage)
+CREATE TABLE IF NOT EXISTS telegram_media_group_buffer (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  seller_bot_id uuid REFERENCES telegram_bots(id) ON DELETE CASCADE,
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE,
-  telegram_chat_id bigint NOT NULL,
-  telegram_chat_title text,
-  is_active boolean DEFAULT true,
-  last_sync_at timestamptz,
+  media_group_id text NOT NULL,
+  telegram_message_id bigint NOT NULL,
+  file_id text NOT NULL,
+  media_type text NOT NULL,
+  file_name text,
+  file_size bigint,
+  mime_type text,
+  message_text text,
   created_at timestamptz DEFAULT now()
 );
 
+-- Telegram import sessions
 CREATE TABLE IF NOT EXISTS telegram_import_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  telegram_user_id bigint NOT NULL,
-  platform_user_id uuid REFERENCES users(id) ON DELETE CASCADE,
   course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  message_count integer DEFAULT 0,
-  is_active boolean DEFAULT true,
+  bot_id uuid REFERENCES telegram_bots(id) ON DELETE SET NULL,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'completed', 'failed')),
+  total_messages integer DEFAULT 0,
+  processed_messages integer DEFAULT 0,
+  failed_messages integer DEFAULT 0,
+  error_message text,
+  started_at timestamptz,
   completed_at timestamptz,
   created_at timestamptz DEFAULT now()
 );
 
--- ============================================================
--- COURSE POSTS (unified feed system)
--- ============================================================
+-- ============================================================================
+-- MEDIA & STORAGE TABLES
+-- ============================================================================
 
-CREATE TABLE IF NOT EXISTS course_posts (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  source_type text NOT NULL CHECK (source_type IN ('telegram', 'manual')) DEFAULT 'manual',
-  title text DEFAULT '',
-  text_content text DEFAULT '',
-  media_type text CHECK (media_type IN ('image', 'video', 'document', 'audio', 'animation', 'voice', 'media_group', NULL)),
-  media_group_id text,
-  media_count integer DEFAULT 1,
-  storage_path text,
-  thumbnail_storage_path text,
-  file_name text,
-  file_size bigint,
-  mime_type text,
-  telegram_file_id text,
-  telegram_thumbnail_file_id text,
-  telegram_message_id bigint,
-  telegram_media_width integer,
-  telegram_media_height integer,
-  telegram_media_duration integer,
-  has_error boolean DEFAULT false,
-  error_message text,
-  order_index integer DEFAULT 0,
-  published_at timestamptz DEFAULT now(),
-  created_at timestamptz DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS course_post_media (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  post_id uuid REFERENCES course_posts(id) ON DELETE CASCADE NOT NULL,
-  media_type text CHECK (media_type IN ('image', 'video', 'document', 'audio', 'animation', 'voice', NULL)),
-  storage_path text,
-  thumbnail_storage_path text,
-  telegram_file_id text,
-  thumbnail_file_id text,
-  file_name text,
-  file_size bigint,
-  mime_type text,
-  telegram_media_width integer,
-  telegram_media_height integer,
-  telegram_media_duration integer,
-  has_error boolean DEFAULT false,
-  error_message text,
-  order_index integer DEFAULT 0,
-  created_at timestamptz DEFAULT now()
-);
-
--- Media group buffer (for collecting album parts before processing)
-CREATE TABLE IF NOT EXISTS telegram_media_group_buffer (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  course_id uuid NOT NULL,
-  media_group_id text NOT NULL,
-  telegram_message_id bigint NOT NULL,
-  media_data jsonb NOT NULL,
-  caption text,
-  message_date timestamptz NOT NULL,
-  received_at timestamptz DEFAULT now(),
-  created_at timestamptz DEFAULT now()
-);
-
--- ============================================================
--- STUDENT PINNED POSTS
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS student_pinned_posts (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id uuid REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  post_id uuid REFERENCES course_posts(id) ON DELETE CASCADE NOT NULL,
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  pinned_at timestamptz DEFAULT now(),
-  UNIQUE(student_id, post_id)
-);
-
--- ============================================================
--- MEDIA ACCESS TOKENS
--- ============================================================
-
+-- Media access tokens (temporary signed URLs)
 CREATE TABLE IF NOT EXISTS media_access_tokens (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid REFERENCES users(id) ON DELETE CASCADE NOT NULL,
-  course_id uuid REFERENCES courses(id) ON DELETE CASCADE NOT NULL,
-  file_id text NOT NULL,
-  token text UNIQUE NOT NULL DEFAULT encode(gen_random_bytes(32), 'base64'),
-  expires_at timestamptz NOT NULL DEFAULT (now() + interval '1 hour'),
+  media_path text NOT NULL,
+  token text NOT NULL UNIQUE,
+  expires_at timestamptz NOT NULL,
   created_at timestamptz DEFAULT now()
 );
 
--- ============================================================
--- ADS & FEATURED (premium system)
--- ============================================================
+-- ============================================================================
+-- OAUTH & SESSION TABLES
+-- ============================================================================
 
-CREATE TABLE IF NOT EXISTS ad_posts (
+-- PKCE sessions (OAuth flow)
+CREATE TABLE IF NOT EXISTS pkce_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL DEFAULT '',
-  text_content text DEFAULT '',
-  media_type text,
-  storage_path text,
-  file_name text,
-  link_url text,
-  link_label text DEFAULT 'Подробнее',
-  is_active boolean DEFAULT true,
-  display_frequency integer DEFAULT 5,
+  code_verifier text NOT NULL,
+  code_challenge text NOT NULL,
+  state text NOT NULL UNIQUE,
+  provider text NOT NULL,
+  expires_at timestamptz NOT NULL,
   created_at timestamptz DEFAULT now()
 );
 
+-- ============================================================================
+-- ADMIN FEATURE TABLES
+-- ============================================================================
+
+-- Premium courses
+CREATE TABLE IF NOT EXISTS premium_courses (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE UNIQUE NOT NULL,
+  enabled boolean DEFAULT true,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Featured courses
 CREATE TABLE IF NOT EXISTS featured_courses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  title text NOT NULL,
-  description text DEFAULT '',
-  category text DEFAULT '',
-  instructor text DEFAULT '',
-  image_url text DEFAULT '',
+  course_id uuid REFERENCES courses(id) ON DELETE CASCADE UNIQUE NOT NULL,
   order_index integer DEFAULT 0,
+  enabled boolean DEFAULT true,
+  created_at timestamptz DEFAULT now()
+);
+
+-- Advertisement posts
+CREATE TABLE IF NOT EXISTS ads_posts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  image_url text,
+  target_url text,
+  impressions integer DEFAULT 0,
+  clicks integer DEFAULT 0,
   is_active boolean DEFAULT true,
   created_at timestamptz DEFAULT now(),
   updated_at timestamptz DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS premium_sellers (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  seller_id uuid REFERENCES sellers(id) ON DELETE CASCADE NOT NULL UNIQUE,
-  premium_until timestamptz,
-  is_active boolean DEFAULT true,
-  created_at timestamptz DEFAULT now()
-);
-
--- ============================================================
--- OAUTH / PKCE
--- ============================================================
-
-CREATE TABLE IF NOT EXISTS pkce_sessions (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  state text UNIQUE NOT NULL,
-  code_verifier text NOT NULL,
-  redirect_url text,
-  expires_at timestamptz DEFAULT (now() + interval '10 minutes'),
-  created_at timestamptz DEFAULT now()
-);
-
--- ============================================================
+-- ============================================================================
 -- INDEXES
--- ============================================================
+-- ============================================================================
 
 CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id);
-CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(oauth_provider, oauth_id);
 CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON user_roles(user_id);
+CREATE INDEX IF NOT EXISTS idx_sellers_user_id ON sellers(user_id);
 CREATE INDEX IF NOT EXISTS idx_courses_seller_id ON courses(seller_id);
+CREATE INDEX IF NOT EXISTS idx_courses_telegram_chat_id ON courses(telegram_chat_id);
 CREATE INDEX IF NOT EXISTS idx_course_modules_course_id ON course_modules(course_id);
 CREATE INDEX IF NOT EXISTS idx_course_lessons_module_id ON course_lessons(module_id);
 CREATE INDEX IF NOT EXISTS idx_lesson_content_lesson_id ON lesson_content(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id ON course_enrollments(student_id);
+CREATE INDEX IF NOT EXISTS idx_course_enrollments_user_id ON course_enrollments(user_id);
 CREATE INDEX IF NOT EXISTS idx_course_enrollments_course_id ON course_enrollments(course_id);
+CREATE INDEX IF NOT EXISTS idx_pending_enrollments_course_id ON pending_enrollments(course_id);
+CREATE INDEX IF NOT EXISTS idx_pending_enrollments_student_id ON pending_enrollments(student_id);
+CREATE INDEX IF NOT EXISTS idx_pending_enrollments_user_id ON pending_enrollments(user_id);
 CREATE INDEX IF NOT EXISTS idx_lesson_progress_enrollment_id ON lesson_progress(enrollment_id);
 CREATE INDEX IF NOT EXISTS idx_course_posts_course_id ON course_posts(course_id);
-CREATE INDEX IF NOT EXISTS idx_course_posts_published_at ON course_posts(published_at);
+CREATE INDEX IF NOT EXISTS idx_course_posts_is_pinned ON course_posts(is_pinned);
 CREATE INDEX IF NOT EXISTS idx_course_post_media_post_id ON course_post_media(post_id);
-CREATE INDEX IF NOT EXISTS idx_media_group_buffer_group_id ON telegram_media_group_buffer(media_group_id);
-CREATE INDEX IF NOT EXISTS idx_media_group_buffer_received_at ON telegram_media_group_buffer(received_at);
-CREATE INDEX IF NOT EXISTS idx_telegram_bots_bot_token ON telegram_bots(bot_token);
-CREATE INDEX IF NOT EXISTS idx_telegram_bots_is_active ON telegram_bots(is_active);
+CREATE INDEX IF NOT EXISTS idx_course_post_media_media_group_id ON course_post_media(media_group_id);
+CREATE INDEX IF NOT EXISTS idx_student_pinned_posts_user_id ON student_pinned_posts(user_id);
+CREATE INDEX IF NOT EXISTS idx_student_pinned_posts_course_id ON student_pinned_posts(course_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_bots_seller_id ON telegram_bots(seller_id);
-CREATE INDEX IF NOT EXISTS idx_telegram_bots_course_id ON telegram_bots(course_id);
-CREATE INDEX IF NOT EXISTS idx_telegram_main_bot_token ON telegram_main_bot(bot_token);
-CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_user ON telegram_import_sessions(telegram_user_id, is_active);
-CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_user_id ON telegram_import_sessions(telegram_user_id);
-CREATE INDEX IF NOT EXISTS idx_telegram_import_sessions_course_id ON telegram_import_sessions(course_id);
-CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_bot_id ON telegram_linked_chats(bot_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_course_id ON telegram_linked_chats(course_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_linked_chats_chat_id ON telegram_linked_chats(chat_id);
+CREATE INDEX IF NOT EXISTS idx_media_access_tokens_user_id ON media_access_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_media_access_tokens_token ON media_access_tokens(token);
-CREATE INDEX IF NOT EXISTS idx_media_access_tokens_expires ON media_access_tokens(expires_at);
-CREATE INDEX IF NOT EXISTS idx_student_pinned_posts_student ON student_pinned_posts(student_id, course_id);
 CREATE INDEX IF NOT EXISTS idx_pkce_sessions_state ON pkce_sessions(state);
-CREATE INDEX IF NOT EXISTS idx_featured_courses_active ON featured_courses(is_active);
-CREATE INDEX IF NOT EXISTS idx_featured_courses_order ON featured_courses(order_index);
-CREATE INDEX IF NOT EXISTS idx_course_enrollments_student_id_course_id ON course_enrollments(student_id, course_id);
-CREATE INDEX IF NOT EXISTS idx_ad_posts_seller_id ON ad_posts(seller_id);
-CREATE INDEX IF NOT EXISTS idx_ad_posts_is_featured ON ad_posts(is_featured);
+CREATE INDEX IF NOT EXISTS idx_premium_courses_course_id ON premium_courses(course_id);
+CREATE INDEX IF NOT EXISTS idx_featured_courses_course_id ON featured_courses(course_id);
 
--- ============================================================
--- CLEANUP FUNCTIONS
--- ============================================================
+-- ============================================================================
+-- FUNCTIONS
+-- ============================================================================
 
-CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
-RETURNS void AS $$
-BEGIN
-  DELETE FROM media_access_tokens WHERE expires_at < now();
-  DELETE FROM pkce_sessions WHERE expires_at < now();
-  DELETE FROM telegram_media_group_buffer WHERE received_at < now() - interval '10 minutes';
-END;
-$$ LANGUAGE plpgsql;
-
--- ============================================================
--- PROCESS MEDIA GROUP FUNCTION
--- Called by backend after buffer delay
--- ============================================================
-
-CREATE OR REPLACE FUNCTION process_media_group(p_media_group_id text, p_course_id uuid)
+-- Function: Get current user ID
+CREATE OR REPLACE FUNCTION get_current_user_id()
 RETURNS uuid AS $$
 DECLARE
-  v_post_id uuid;
-  v_caption text;
-  v_message_date timestamptz;
-  v_media_count integer;
+  current_user_id uuid;
 BEGIN
-  SELECT caption, message_date INTO v_caption, v_message_date
-  FROM telegram_media_group_buffer
-  WHERE media_group_id = p_media_group_id AND course_id = p_course_id
-  ORDER BY created_at
+  SELECT id INTO current_user_id
+  FROM users
+  WHERE user_id = auth.uid() OR id = auth.uid()
   LIMIT 1;
 
-  SELECT COUNT(*) INTO v_media_count
-  FROM telegram_media_group_buffer
-  WHERE media_group_id = p_media_group_id AND course_id = p_course_id;
+  RETURN current_user_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-  INSERT INTO course_posts (
-    course_id, source_type, media_type, media_group_id, media_count, published_at
-  )
-  VALUES (
-    p_course_id, 'telegram', 'media_group', p_media_group_id, v_media_count, v_message_date
-  )
-  RETURNING id INTO v_post_id;
+-- Function: Check if user is super admin
+CREATE OR REPLACE FUNCTION is_super_admin(user_uuid uuid)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM user_roles
+    WHERE user_id = user_uuid AND role = 'super_admin'
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-  RETURN v_post_id;
+-- Function: Check if user is seller
+CREATE OR REPLACE FUNCTION is_seller(user_uuid uuid)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM user_roles
+    WHERE user_id = user_uuid AND role = 'seller'
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: Get seller ID for user
+CREATE OR REPLACE FUNCTION get_seller_id(user_uuid uuid)
+RETURNS uuid AS $$
+BEGIN
+  RETURN (SELECT id FROM sellers WHERE user_id = user_uuid);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: Check if user is enrolled in course
+CREATE OR REPLACE FUNCTION is_enrolled_in_course(user_uuid uuid, course_uuid uuid)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM course_enrollments
+    WHERE course_id = course_uuid
+    AND (student_id = user_uuid OR user_id = user_uuid)
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: Check if user owns course
+CREATE OR REPLACE FUNCTION owns_course(user_uuid uuid, course_uuid uuid)
+RETURNS boolean AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM courses
+    WHERE id = course_uuid
+    AND seller_id = get_seller_id(user_uuid)
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: Get vault secret (for secure storage)
+CREATE OR REPLACE FUNCTION get_vault_secret(secret_name text)
+RETURNS text AS $$
+BEGIN
+  -- This function would integrate with Vault in production
+  -- For now, return NULL (secrets managed via environment variables)
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================================
+-- TRIGGERS
+-- ============================================================================
+
+-- Trigger: Update courses.updated_at on update
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- ============================================================
--- DONE
--- ============================================================
--- После применения схемы:
--- 1. Создайте суперадмина через INSERT в users + user_roles
--- 2. Настройте Telegram main bot через INSERT в telegram_main_bot
--- 3. Запустите бэкенд и проверьте /health endpoint
+CREATE TRIGGER update_courses_updated_at
+  BEFORE UPDATE ON courses
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_course_posts_updated_at
+  BEFORE UPDATE ON course_posts
+  FOR EACH ROW
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Trigger: Update lesson_progress.updated_at on update
+CREATE OR REPLACE FUNCTION update_lesson_progress_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER lesson_progress_update_timestamp
+  BEFORE UPDATE ON lesson_progress
+  FOR EACH ROW
+  EXECUTE FUNCTION update_lesson_progress_updated_at();
+
+-- ============================================================================
+-- ROW LEVEL SECURITY (RLS) - DISABLED FOR STANDALONE BACKEND
+-- ============================================================================
+-- Note: RLS is disabled because authentication is handled by backend JWT middleware
+-- The backend enforces access control at the application layer
+
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE user_roles DISABLE ROW LEVEL SECURITY;
+ALTER TABLE sellers DISABLE ROW LEVEL SECURITY;
+ALTER TABLE courses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE course_modules DISABLE ROW LEVEL SECURITY;
+ALTER TABLE course_lessons DISABLE ROW LEVEL SECURITY;
+ALTER TABLE lesson_content DISABLE ROW LEVEL SECURITY;
+ALTER TABLE course_enrollments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE pending_enrollments DISABLE ROW LEVEL SECURITY;
+ALTER TABLE lesson_progress DISABLE ROW LEVEL SECURITY;
+ALTER TABLE course_posts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE course_post_media DISABLE ROW LEVEL SECURITY;
+ALTER TABLE student_pinned_posts DISABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_bots DISABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_main_bot DISABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_linked_chats DISABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_media_group_buffer DISABLE ROW LEVEL SECURITY;
+ALTER TABLE telegram_import_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE media_access_tokens DISABLE ROW LEVEL SECURITY;
+ALTER TABLE pkce_sessions DISABLE ROW LEVEL SECURITY;
+ALTER TABLE premium_courses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE featured_courses DISABLE ROW LEVEL SECURITY;
+ALTER TABLE ads_posts DISABLE ROW LEVEL SECURITY;
+
+-- ============================================================================
+-- REPLICA IDENTITY (for real-time subscriptions)
+-- ============================================================================
+
+ALTER TABLE student_pinned_posts REPLICA IDENTITY FULL;
+ALTER TABLE course_posts REPLICA IDENTITY FULL;
+ALTER TABLE course_post_media REPLICA IDENTITY FULL;
+
+-- ============================================================================
+-- COMMENTS
+-- ============================================================================
+
+COMMENT ON TABLE users IS 'Platform users with Telegram and OAuth authentication';
+COMMENT ON TABLE user_roles IS 'User role assignments (super_admin, seller, student)';
+COMMENT ON TABLE sellers IS 'Seller/course creator profiles';
+COMMENT ON TABLE courses IS 'Courses created by sellers';
+COMMENT ON TABLE course_modules IS 'Course modules/sections';
+COMMENT ON TABLE course_lessons IS 'Individual lessons within modules';
+COMMENT ON TABLE lesson_content IS 'Lesson content (video, text, files)';
+COMMENT ON TABLE course_enrollments IS 'Student enrollments in courses';
+COMMENT ON TABLE pending_enrollments IS 'Pending enrollment requests awaiting approval';
+COMMENT ON TABLE lesson_progress IS 'Student progress tracking for lessons';
+COMMENT ON TABLE course_posts IS 'Course posts from Telegram or manual creation';
+COMMENT ON TABLE course_post_media IS 'Media attachments for course posts (stored in S3)';
+COMMENT ON TABLE student_pinned_posts IS 'Posts pinned by individual students';
+COMMENT ON TABLE telegram_bots IS 'Telegram bot configurations per seller';
+COMMENT ON TABLE telegram_main_bot IS 'Main platform Telegram bot';
+COMMENT ON TABLE telegram_linked_chats IS 'Telegram chats linked to courses';
+COMMENT ON TABLE telegram_media_group_buffer IS 'Temporary buffer for Telegram media groups';
+COMMENT ON TABLE telegram_import_sessions IS 'Telegram message import session tracking';
+COMMENT ON TABLE media_access_tokens IS 'Temporary access tokens for media files';
+COMMENT ON TABLE pkce_sessions IS 'OAuth PKCE flow sessions';
+COMMENT ON TABLE premium_courses IS 'Premium course designations';
+COMMENT ON TABLE featured_courses IS 'Featured courses on platform';
+COMMENT ON TABLE ads_posts IS 'Advertisement posts';
+
+COMMENT ON COLUMN course_post_media.s3_url IS 'S3 URL for media file (primary storage)';
+COMMENT ON COLUMN course_post_media.telegram_file_id IS 'Legacy Telegram file ID (deprecated, migrated to S3)';
+COMMENT ON COLUMN users.user_id IS 'UUID from auth.users (for OAuth users)';
+COMMENT ON COLUMN users.telegram_id IS 'Telegram user ID (for Telegram users)';

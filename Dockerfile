@@ -1,20 +1,25 @@
-FROM node:20-alpine
-
-RUN apk add --no-cache curl
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
+
 RUN npm ci
 
 COPY . .
+
 RUN npm run build
 
-RUN npm prune --omit=dev
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci --only=production
+
+COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
-
-HEALTHCHECK --interval=15s --timeout=5s --start-period=45s --retries=5 \
-  CMD curl -f http://127.0.0.1:3000/health || exit 1
 
 CMD ["node", "dist/index.js"]

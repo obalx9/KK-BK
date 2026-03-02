@@ -1,105 +1,58 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import { logger } from './utils/logger.js';
+import coursesRouter from './routes/courses.js';
+import postsRouter from './routes/posts.js';
+import mediaRouter from './routes/media.js';
+import adminRouter from './routes/admin.js';
+import adsRouter from './routes/ads.js';
+import featuredRouter from './routes/featured.js';
+import statsRouter from './routes/stats.js';
+import authRouter from './routes/auth.js';
+import telegramRouter from './routes/telegram.js';
+import oauthRouter from './routes/oauth.js';
+import { authMiddleware } from './middleware/auth.js';
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
-
-const REQUIRED_ENV_VARS = ['DATABASE_URL', 'JWT_SECRET'];
-const OPTIONAL_ENV_VARS = ['S3_ENDPOINT', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'S3_BUCKET', 'VK_CLIENT_ID', 'VK_CLIENT_SECRET', 'YANDEX_CLIENT_ID', 'YANDEX_CLIENT_SECRET'];
-
-console.log('[INFO] Checking environment variables...');
-const missingRequired = REQUIRED_ENV_VARS.filter(v => !process.env[v]);
-if (missingRequired.length > 0) {
-  console.error(`[ERROR] Missing required environment variables: ${missingRequired.join(', ')}`);
-  process.exit(1);
-}
-
-const missingOptional = OPTIONAL_ENV_VARS.filter(v => !process.env[v]);
-if (missingOptional.length > 0) {
-  console.warn(`[WARN] Missing optional environment variables: ${missingOptional.join(', ')}`);
-  console.warn('[WARN] Some features may not work (S3 media storage)');
-}
-
-console.log('[INFO] Environment variables OK');
-
-import authRouter from './routes/auth';
-import mediaRouter from './routes/media';
-import webhookRouter from './routes/webhook';
-import telegramRouter from './routes/telegram';
-import telegramChatSyncRouter from './routes/telegram-chat-sync';
-import sellersRouter from './routes/sellers';
-import databaseRouter from './routes/database';
-import storageRouter from './routes/storage';
-import rpcRouter from './routes/rpc';
-import pool from './db';
-
-async function checkDatabaseConnection(): Promise<boolean> {
-  try {
-    console.log('[INFO] Testing database connection...');
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    console.log('[INFO] Database connection successful');
-    return true;
-  } catch (err) {
-    console.error('[ERROR] Database connection failed:', err);
-    return false;
-  }
-}
+const PORT = process.env.PORT || 3000;
 
 app.use(cors({
-  origin: process.env.APP_URL || '*',
-  credentials: true,
+  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  credentials: true
 }));
 
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, ts: new Date().toISOString() });
+app.use((req, res, next) => {
+  logger.info(`${req.method} ${req.path}`);
+  next();
 });
 
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Public routes (no auth required)
 app.use('/api/auth', authRouter);
-app.use('/api/db', databaseRouter);
-app.use('/api/storage', storageRouter);
-app.use('/api/rpc', rpcRouter);
-app.use('/api/media', mediaRouter);
+app.use('/api/oauth', oauthRouter);
 app.use('/api/telegram', telegramRouter);
-app.use('/api/telegram-chat-sync', telegramChatSyncRouter);
-app.use('/api/sellers', sellersRouter);
-app.use('/api/webhook', webhookRouter);
+app.use('/api/ads', adsRouter);
+app.use('/api/featured', featuredRouter);
 
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error('[ERROR] Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+// Protected routes (auth required)
+app.use('/api/courses', authMiddleware, coursesRouter);
+app.use('/api/posts', authMiddleware, postsRouter);
+app.use('/api/media', authMiddleware, mediaRouter);
+app.use('/api/admin', authMiddleware, adminRouter);
+app.use('/api/stats', authMiddleware, statsRouter);
+
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error('Error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error'
+  });
 });
 
-(async () => {
-  const dbOk = await checkDatabaseConnection();
-  if (!dbOk) {
-    console.error('[ERROR] Cannot start server - database not available');
-    process.exit(1);
-  }
-
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[INFO] KeyKurs backend listening on port ${PORT}`);
-    console.log(`[INFO] Health check: http://localhost:${PORT}/health`);
-    console.log('[INFO] Server ready to accept connections');
-  });
-
-  server.on('error', (err) => {
-    console.error('[ERROR] Server error:', err);
-    process.exit(1);
-  });
-
-  process.on('SIGTERM', () => {
-    console.log('[INFO] SIGTERM received, shutting down gracefully');
-    server.close(() => {
-      console.log('[INFO] Server closed');
-      process.exit(0);
-    });
-  });
-})();
-
-export default app;
+app.listen(PORT, () => {
+  logger.info(`Server running on port ${PORT}`);
+});
