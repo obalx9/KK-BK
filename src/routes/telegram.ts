@@ -419,6 +419,39 @@ async function processMediaGroup(
   }
 }
 
+// GET /api/telegram/main-bot-username - Get main bot username (public endpoint)
+router.get('/main-bot-username', async (req: Request, res: Response) => {
+  const pool: Pool = req.app.get('db');
+
+  try {
+    logger.info('Fetching main bot username');
+
+    const result = await pool.query(
+      'SELECT bot_username FROM telegram_main_bot WHERE is_active = true LIMIT 1'
+    );
+
+    logger.info(`Found ${result.rows.length} active main bots`);
+
+    if (result.rows.length === 0) {
+      logger.warn('No active main bot found in database');
+      return res.status(404).json({ error: 'Main bot not configured' });
+    }
+
+    const botUsername = result.rows[0].bot_username;
+    logger.info(`Returning bot username: ${botUsername}`);
+
+    res.json({
+      bot_username: botUsername,
+    });
+  } catch (error) {
+    logger.error('Error getting main bot username:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // GET /api/telegram/chat-sync/get-chats - Get available chats for a bot
 router.get('/chat-sync/get-chats', async (req: Request, res: Response) => {
   const pool: Pool = req.app.get('db');
