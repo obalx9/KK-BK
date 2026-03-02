@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { logger } from './utils/logger.js';
+import pool from './utils/db.js';
 import coursesRouter from './routes/courses.js';
 import postsRouter from './routes/posts.js';
 import mediaRouter from './routes/media.js';
@@ -15,6 +16,8 @@ import { authMiddleware } from './middleware/auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.set('db', pool);
 
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
